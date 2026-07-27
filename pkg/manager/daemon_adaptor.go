@@ -48,7 +48,7 @@ func (m *Manager) StartDaemon(d *daemon.Daemon) error {
 	d.Lock()
 	defer d.Unlock()
 
-	d.States.ProcessID = cmd.Process.Pid
+	d.RecordProcess(cmd.Process.Pid)
 
 	// Profile nydusd daemon CPU usage during its startup.
 	if config.GetDaemonProfileCPUDuration() > 0 {
