@@ -191,7 +191,10 @@ func WaitUntilSocketExisted(sock string, pid int) error {
 		retry.OnlyRetryIf(func(error) bool {
 			zombie, err := tool.IsZombieProcess(pid)
 			if err != nil {
-				return false
+				// The process is gone, so its socket will never show up.
+				// Stop retry immediately.
+				log.L.WithError(err).Errorf("Process %d is gone, giving up waiting for socket %s", pid, sock)
+				return true
 			}
 			// Stop retry if nydus daemon process is already in Zombie state.
 			if zombie {
