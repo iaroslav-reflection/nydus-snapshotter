@@ -12,8 +12,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,6 +70,31 @@ func TestNydusClient_CheckStatus(t *testing.T) {
 	assert.Equal(t, info.DaemonState(), types.DaemonStateRunning)
 	assert.Equal(t, "testid", info.ID)
 	assert.Equal(t, BTI, info.Version)
+}
+
+func TestWaitUntilSocketExistedAbortsWhenProcessIsGone(t *testing.T) {
+	// A process that has exited and been reaped has no /proc entry anymore,
+	// so its socket can never appear.
+	cmd := exec.Command("true")
+	require.NoError(t, cmd.Start())
+	require.NoError(t, cmd.Wait())
+
+	sock := filepath.Join(t.TempDir(), "api.sock")
+
+	start := time.Now()
+	err := WaitUntilSocketExisted(sock, cmd.Process.Pid)
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	// Without the abort the retry loop burns all 100 attempts (~15s).
+	assert.Less(t, elapsed, 3*time.Second)
+}
+
+func TestWaitUntilSocketExistedReturnsWhenSocketExists(t *testing.T) {
+	sock, dispose := prepareNydusServer(t)
+	defer dispose()
+
+	require.NoError(t, WaitUntilSocketExisted(sock, os.Getpid()))
 }
 
 func TestUpdateConfig(t *testing.T) {
