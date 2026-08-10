@@ -257,3 +257,29 @@ func TestTerminateOnlySignalsTheRecordedProcess(t *testing.T) {
 		assert.False(t, alive(cmd.Process.Pid))
 	})
 }
+
+func TestRecordProcessResetsStaleStartTime(t *testing.T) {
+	cmd := exec.Command("sleep", "60")
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+
+	d := &Daemon{States: ConfigState{ID: "d4"}}
+	d.RecordProcess(cmd.Process.Pid)
+	require.NotZero(t, d.States.ProcessStartTime)
+
+	// Restart/failover reuses the same Daemon: recording a process whose
+	// start time cannot be read must clear the previously recorded start
+	// time, or IsRecordedProcess would compare the new PID against the
+	// stale value and Terminate would permanently skip this daemon.
+	gone := exec.Command("true")
+	require.NoError(t, gone.Start())
+	require.NoError(t, gone.Wait())
+	d.RecordProcess(gone.Process.Pid)
+
+	assert.Equal(t, gone.Process.Pid, d.States.ProcessID)
+	assert.Zero(t, d.States.ProcessStartTime)
+	assert.True(t, d.isRecordedProcess())
+}

@@ -103,7 +103,12 @@ func (m *Manager) StartDaemon(d *daemon.Daemon) error {
 		collector.NewDaemonEventCollector(types.DaemonStateRunning).Collect()
 
 		if m.CgroupMgr != nil {
-			if err := m.CgroupMgr.AddProc(d.States.ProcessID); err != nil {
+			pid, ok := d.VerifiedPid()
+			if !ok {
+				log.L.Warnf("not adding process %d to cgroup: not the recorded daemon %s process, PID may have been recycled", d.States.ProcessID, d.ID())
+				return
+			}
+			if err := m.CgroupMgr.AddProc(pid); err != nil {
 				log.L.WithError(err).Errorf("add daemon %s to cgroup failed", d.ID())
 				return
 			}

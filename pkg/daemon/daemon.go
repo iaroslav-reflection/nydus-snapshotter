@@ -643,8 +643,10 @@ func (d *Daemon) RecordProcess(pid int) {
 	d.States.ProcessID = pid
 	startTime, err := tool.GetProcessStartTime(pid)
 	if err != nil {
-		// The record keeps a zero start time and signaling falls back to the
+		// Reset any start time recorded for a previous process of this daemon:
+		// the record keeps a zero start time and signaling falls back to the
 		// unverified pre-check behavior for this daemon.
+		d.States.ProcessStartTime = 0
 		log.L.WithError(err).Warnf("failed to record start time of daemon %s process %d", d.ID(), pid)
 		return
 	}
@@ -653,16 +655,31 @@ func (d *Daemon) RecordProcess(pid int) {
 
 // isRecordedProcess reports whether the process currently running with the
 // daemon's recorded PID is still the nydusd this record was created for. PIDs
-// are recycled on busy hosts, and signaling a recycled PID hits an unrelated
-// process. A record without a start time — persisted by an older snapshotter
-// version, or its process was gone before the start time could be read — is
-// signaled as before this check existed, so such daemons are still torn down.
+// are recycled on busy hosts, and signaling a recycled PID or adding it to a
+// cgroup hits an unrelated process. A record without a start time — persisted
+// by an older snapshotter version, or its process was gone before the start
+// time could be read — is treated as before this check existed, so such
+// daemons are still torn down.
 func (d *Daemon) isRecordedProcess() bool {
 	if d.States.ProcessStartTime == 0 {
 		return true
 	}
 	startTime, err := tool.GetProcessStartTime(d.Pid())
 	return err == nil && startTime == d.States.ProcessStartTime
+}
+
+// VerifiedPid returns the daemon's recorded PID after verifying that the
+// process running under it is still the nydusd this record was created for
+// (see isRecordedProcess). It reports ok=false when no PID was recorded or
+// when the PID may have been recycled by another process. Any code that acts
+// on the daemon process — signaling it, adding it to a cgroup — must use this
+// instead of reading the raw PID.
+func (d *Daemon) VerifiedPid() (pid int, ok bool) {
+	pid = d.Pid()
+	if pid <= 0 || !d.isRecordedProcess() {
+		return 0, false
+	}
+	return pid, true
 }
 
 func (d *Daemon) Terminate() error {
@@ -672,16 +689,17 @@ func (d *Daemon) Terminate() error {
 	defer d.Unlock()
 
 	if d.Pid() > 0 {
-		if !d.isRecordedProcess() {
+		pid, ok := d.VerifiedPid()
+		if !ok {
 			log.L.Warnf("not terminating process %d: not the recorded daemon %s process, PID may have been recycled", d.Pid(), d.ID())
 			return nil
 		}
-		p, err := os.FindProcess(d.Pid())
+		p, err := os.FindProcess(pid)
 		if err != nil {
-			return errors.Wrapf(err, "find process %d", d.Pid())
+			return errors.Wrapf(err, "find process %d", pid)
 		}
 		if err = p.Signal(syscall.SIGTERM); err != nil {
-			return errors.Wrapf(err, "send SIGTERM signal to process %d", d.Pid())
+			return errors.Wrapf(err, "send SIGTERM signal to process %d", pid)
 		}
 	}
 
