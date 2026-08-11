@@ -25,10 +25,10 @@ func notifySystemd(state string) {
 	}
 }
 
-// notifyReady tells the service manager the snapshotter has finished recovery
-// and its gRPC socket is serving. With Type=notify, systemd keeps the unit in
-// "activating" until this point, so dependents can order on real readiness
-// instead of process start.
+// notifyReady tells the service manager that the snapshotter has finished
+// recovery and its gRPC socket is ready to accept connections. With
+// Type=notify, systemd keeps the unit "activating" until this point, allowing
+// dependents to wait for actual readiness instead of merely process startup.
 func notifyReady() {
 	notifySystemd(sd.SdNotifyReady)
 }
