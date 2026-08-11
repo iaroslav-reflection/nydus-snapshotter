@@ -47,8 +47,8 @@ func startMockNydusd(t *testing.T, sock string, delay time.Duration) {
 }
 
 // newRecoverTestDaemon persists a fusedev daemon record whose API socket and
-// PID are the given ones.
-func newRecoverTestDaemon(t *testing.T, m *Manager, id, sock string, pid int) {
+// PID are the given ones, and returns the record's configuration directory.
+func newRecoverTestDaemon(t *testing.T, m *Manager, id, sock string, pid int) string {
 	configDir := filepath.Join(t.TempDir(), id)
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
 	cfg := daemonconfig.FuseDaemonConfig{
@@ -71,6 +71,7 @@ func newRecoverTestDaemon(t *testing.T, m *Manager, id, sock string, pid int) {
 		ConfigDir:  configDir,
 	}
 	require.NoError(t, m.AddDaemon(d))
+	return configDir
 }
 
 func TestRecoverDaemonsConcurrently(t *testing.T) {
@@ -118,4 +119,32 @@ func TestRecoverDaemonsConcurrently(t *testing.T) {
 	// recovery is bounded by the slowest daemon; leave generous headroom for
 	// slow CI machines.
 	assert.Less(t, elapsed, 4*delay)
+}
+
+func TestRecoverDaemonsCommitsNothingOnProbeFailure(t *testing.T) {
+	db, err := store.NewDatabase(t.TempDir())
+	require.NoError(t, err)
+	m, err := NewManager(Opt{
+		Database: db,
+		FsDriver: config.FsDriverFusedev,
+	})
+	require.NoError(t, err)
+
+	sockDir := t.TempDir()
+	sock := filepath.Join(sockDir, "live-0.sock")
+	startMockNydusd(t, sock, 0)
+	newRecoverTestDaemon(t, m, "live-0", sock, os.Getpid())
+
+	// A record whose configuration cannot be reloaded fails its probe.
+	configDir := newRecoverTestDaemon(t, m, "damaged-0", filepath.Join(sockDir, "damaged-0.sock"), os.Getpid())
+	require.NoError(t, os.Remove(filepath.Join(configDir, "config.json")))
+
+	recovering := make(map[string]*daemon.Daemon)
+	live := make(map[string]*daemon.Daemon)
+
+	require.Error(t, m.recoverDaemons(context.Background(), &recovering, &live))
+
+	// Recovery failed before the commit phase: no partial results.
+	assert.Empty(t, recovering)
+	assert.Empty(t, live)
 }
